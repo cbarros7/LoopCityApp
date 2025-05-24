@@ -1,0 +1,59 @@
+[tool.poetry]
+name = "backend-api"
+version = "0.1.0"
+description = "Backend API services for the hyperlocal recommendation WebApp using FastAPI."
+authors = ["Carlos Barros <loopcityapp@gmail.com>"]
+readme = "README.md"
+packages = [{include = "app"}] # Points to the 'app' folder within 'backend/'
+
+[tool.poetry.dependencies]
+python = ">=3.11, <3.12"
+
+# ---- Web Framework & Server ----
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+python-multipart = "^0.0.9" # Required for form data (file uploads, etc.)
+loguru = "^0.7.3"          # For friendly and efficient logging
+
+# ---- Databases & Caching ----
+pymongo = "^4.7.0"           # MongoDB client
+cassandra-driver = "^3.29.0" # Cassandra client (if used directly here)
+redis = "^5.0.0"             # Redis client
+
+# ---- Message Queues ----
+confluent-kafka = "^2.4.0"   # Kafka client for Python (producer and/or consumer)
+
+# ---- External API Interactions (if backend directly calls any, e.g., for validation) ----
+requests = "^2.31.0"         # For making synchronous external API calls
+httpx = "^0.27.0"            # Asynchronous HTTP client, useful for FastAPI's TestClient and direct async calls
+
+# ---- Authentication & Utility Libraries ----
+python-dotenv = "^1.0.0"     # For loading environment variables from .env files
+pyjwt = {extras = ["crypto"], version = "^2.8.0"} # For handling JSON Web Tokens
+passlib = {extras = ["bcrypt"], version = "^1.7.4"} # For password hashing
+email-validator = "^2.1.0"   # For advanced email validation
+
+[tool.poetry.group.dev.dependencies]
+# ---- Testing ----
+pytest = "^8.0.0"
+pytest-asyncio = "^0.23.0"   # Necessary for testing asynchronous code
+pytest-cov = "^5.0.0"        # For measuring test coverage
+requests-mock = "^1.12.0"    # For mocking external HTTP calls (if using 'requests')
+
+# ---- Linting & Formatting (optional here, pre-commit handles globally) ----
+ruff = "^0.4.0" # If you want to run ruff directly from this environment
+
+# ---- Development Tools ----
+ipython = "^8.0.0" # Enhanced interactive shell
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=app --cov-report=html"
+testpaths = [
+    "tests", # Points to the 'tests' folder within 'backend/'
+]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

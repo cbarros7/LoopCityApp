@@ -1,0 +1,183 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # ---- Infraestructura Compartida (Bases de Datos, Kafka (Kraft), Redis) ----
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0 # Versión compatible con Kraft (7.x y superiores)
+    container_name: kafka
+    ports:
+      - "9092:9092" # Puerto para clientes externos (tu máquina host)
+      # Puerto para comunicación interna de Kraft, aunque no es estrictamente necesario exponerlo
+      # - "9093:9093"
+    environment:
+      # Crucial: Habilitar el modo Kraft y generar un ID de clúster si no existe
+      KAFKA_CLUSTER_ID: '4L6g3nSOm4kUyN1f3v2j4w' # Reemplaza con un ID único o usa 'kafka-storage random-uuid'
+      # Configuración para que este nodo sea el controlador (single-node Kraft)
+      KAFKA_BROKER_ID: 1
+      KAFKA_NODE_ID: 1 # Para modo Kraft, es lo mismo que BROKER_ID en un setup simple
+      KAFKA_PROCESS_ROLES: 'broker,controller' # Este nodo actuará como broker y controlador
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:29092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093' # Para un solo nodo, este nodo se vota a sí mismo
+
+      # Directorios de logs y metadata (para persistencia)
+      KAFKA_LOG_DIRS: '/tmp/kraft-kafka-logs' # Directorio para logs de mensajes y metadata de Kraft
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # Reducido para desarrollo
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0 # Para desarrollo
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1 # Para desarrollo
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1 # Para desarrollo
+      KAFKA_NUM_PARTITIONS: 3 # Puedes ajustar el número predeterminado de particiones
+    volumes:
+      - kafka_data:/tmp/kraft-kafka-logs # Persistencia de datos de Kafka (incluye metadata de Kraft)
+    # Comando de inicialización para Kraft:
+    # Si 'kafka_data' es un volumen nuevo y no tiene el ID de clúster, debes formatearlo.
+    # El sleep es para asegurar que el volumen esté montado.
+    command: >
+      bash -c "echo 'Running Kafka in Kraft mode...' &&
+      sleep 5 &&
+      # Intenta formatear si no ha sido formateado, ignora errores si ya existe
+      kafka-storage format -t 4L6g3nSOm4kUyN1f3v2j4w -c /etc/kafka/kafka.properties || true &&
+      /etc/confluent/docker/run"
+    # Nota: El UUID 4L6g3nSOm4kUyN1f3v2j4w debe coincidir con KAFKA_CLUSTER_ID.
+    # Puedes generar uno con 'kafka-storage random-uuid' en un contenedor Kafka o en tu CLI local.
+
+
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  redisdb:
+    image: redis:7.2-alpine
+    container_name: redisdb
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: 'LoopCityCluster'
+      CASSANDRA_DC: 'datacenter1'
+      CASSANDRA_RACK: 'rack1'
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+
+  # ---- Microservicios Python (Backend y Ingestores) ----
+  # Las dependencias ahora solo incluyen 'kafka', ya no 'zookeeper'
+  backend_api:
+    build: ./backend
+    container_name: backend_api
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092 # Conexión a Kafka sin Zookeeper
+      MONGO_URI: mongodb://mongodb:27017/
+      REDIS_HOST: redisdb
+      # ... otras variables
+    depends_on:
+      - kafka
+      - mongodb
+      - redisdb
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  eventbrite_ingestor:
+    build: ./ingestors/eventbrite_ingestor
+    container_name: eventbrite_ingestor
+    ports:
+      - "8001:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      EVENTBRITE_API_KEY: ${EVENTBRITE_API_KEY}
+    depends_on:
+      - kafka # Solo depende de Kafka
+    volumes:
+      - ./ingestors/eventbrite_ingestor/app:/app/app
+      - ./ingestors/eventbrite_ingestor/tests:/app/tests
+      - ./ingestors/eventbrite_ingestor/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/eventbrite_ingestor/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  meetup_ingestor:
+    build: ./ingestors/meetup_ingestor
+    container_name: meetup_ingestor
+    ports:
+      - "8002:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      MEETUP_API_KEY: ${MEETUP_API_KEY}
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/meetup_ingestor/app:/app/app
+      - ./ingestors/meetup_ingestor/tests:/app/tests
+      - ./ingestors/meetup_ingestor/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/meetup_ingestor/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  openweathermap_ingestor:
+    build: ./ingestors/openweathermap_ingestor
+    container_name: openweathermap_ingestor
+    ports:
+      - "8003:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      OPENWEATHERMAP_API_KEY: ${OPENWEATHERMAP_API_KEY}
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/openweathermap_ingestor/app:/app/app
+      - ./ingestors/openweathermap_ingestor/tests:/app/tests
+      - ./ingestors/openweathermap_ingestor/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/openweathermap_ingestor/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  tripadvisor_ingestor:
+    build: ./ingestors/tripadvisor_ingestor
+    container_name: tripadvisor_ingestor
+    ports:
+      - "8004:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      TRIPADVISOR_API_KEY: ${TRIPADVISOR_API_KEY}
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/tripadvisor_ingestor/app:/app/app
+      - ./ingestors/tripadvisor_ingestor/tests:/app/tests
+      - ./ingestors/tripadvisor_ingestor/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/tripadvisor_ingestor/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # ---- Jobs de Procesamiento (Scala/Flink/Spark) ----
+  flink_job_recommendation_processor:
+    build: ./processing/flink_jobs
+    container_name: flink_recommendation_processor
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      MONGO_URI: mongodb://mongodb:27017/
+    depends_on:
+      - kafka
+      - mongodb
+
+# ---- Volúmenes para Persistencia de Datos ----
+volumes:
+  kafka_data:
+  mongodb_data:
+  redis_data:
+  cassandra_data:
