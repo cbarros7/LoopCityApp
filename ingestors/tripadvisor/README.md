@@ -66,3 +66,10 @@ Ejemplo de Flujo de Datos (Conceptual):
     Stay in your monthly budget by setting a daily limit
 
 Docu oficial: https://tripadvisor-content-api.readme.io/reference/overview
+
+# Search
+https://api.content.tripadvisor.com/api/v1/location/search?searchQuery=madrid&category=restaurants&latLong=40.4167047,-3.7035825&radius=20&radiusUnit=km&language=es
+
+
+# Details
+https://api.content.tripadvisor.com/api/v1/location/2086925/details?language=es&currency=EUR

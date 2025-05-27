@@ -2,7 +2,7 @@
 name = "tripadvisor-ingestor"
 version = "0.1.0"
 description = "Ingestion service for TripAdvisor data."
-authors = ["Tu Nombre <tu_email@example.com>"]
+authors = ["Carlos Barros <loopcityapp@gmail.com>"]
 readme = "README.md"
 packages = [{include = "app"}] # Apunta a la carpeta 'app' dentro de 'tripadvisor_ingestor/'
 
