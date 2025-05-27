@@ -262,4 +262,7 @@ zookeeper.out
 # Consumer group offsets (if managed locally, e.g., for testing)
 consumer-offsets/
 
+
+scripts/scrapping/
+ingestors/eventbrite/
 # --- End of .gitignore ---
