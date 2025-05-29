@@ -265,4 +265,25 @@ consumer-offsets/
 
 scripts/scrapping/
 ingestors/eventbrite/
+
+# Ignore everything inside config/
+config/*
+# Allow .yaml files in config/
+!config/*.yaml
+# Allow init_kafka_broker.sh in config/
+!config/init_kafka_broker.sh
+# Explicitly ignore config/kafka (already covered by config/*)
+config/kafka/
+
+# Ignore everything inside kafka/certs
+kafka/certs/
+
+# Ignore everything inside kafka/data
+kafka/data/
+
+# Ignore everything inside kafka/config
+kafka/config/*
+# Allow only .cnf files inside kafka/config
+!kafka/config/*.cnf
+
 # --- End of .gitignore ---
