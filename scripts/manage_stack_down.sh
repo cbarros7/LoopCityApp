@@ -1,10 +1,26 @@
 #!/bin/bash
 
+# --- Cargar variables de entorno desde .env ---
+# Asumimos que .env está en el directorio padre de scripts/
+echo "DEBUG: Checking for .env at: $(readlink -f ../.env)" # <-- Añade esta línea temporalmente para depurar
+if [ -f ".env" ]; then
+  set -a
+  . ".env"
+  set +a
+  echo "DEBUG: .env file loaded for certificate generation."
+else
+  echo "WARNING: .env file not found at ../.env. Ensure it exists with SSL passwords defined."
+  # Puedes salir aquí si las contraseñas son obligatorias, o usar valores por defecto.
+  # Para un script de generación, es mejor que las passwords estén definidas.
+  exit 1
+fi
+# --- Cargar variables de entorno ---
+
 # --- Configuración ---
 # Navega al directorio raíz de tu proyecto donde se encuentra docker-compose.yaml
 cd "$(dirname "$0")/.."
 
-export COMPOSE_PROJECT_NAME="LOOPCITYAPP"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME}"
 
 # --- Lógica Principal ---
 echo "--- Gestión de Bajada de Stack Docker Compose ---"

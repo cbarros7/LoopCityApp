@@ -1,0 +1,694 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # ---- Infraestructura Compartida (Kafka (Kraft), MongoDB, Redis, Cassandra) ----
+
+#####################################################
+# KAFKA                                             #
+#####################################################
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29092"
+
+      KAFKA_LISTENERS: CLIENT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: CLIENT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CLIENT:SASL_PLAINTEXT,INTERNAL:SASL_PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: INTERNAL
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: SCRAM-SHA-512
+
+      KAFKA_USERNAME: "${KAFKA_USERNAME}"
+      KAFKA_PASSWORD: "${KAFKA_PASSWORD}"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/broker_jaas.config" # Mantener esto si lo necesitas
+
+      KAFKA_LOG_DIRS: "/tmp/kraft-kafka-logs"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "${KAFKA_AUTO_CREATE_TOPICS_ENABLE:-false}"
+      KAFKA_CLUSTER_ID: "${KAFKA_CLUSTER_ID}"
+
+      # --- AÑADIR MÁS LOGGING DEL CLIENTE PARA DEPURACIÓN ---
+      # Esto puede generar MUCHOS logs. Úsalo con cuidado.
+      KAFKA_LOG4J_ROOT_LOGLEVEL: INFO # o DEBUG para más detalle
+      KAFKA_LOG4J_LOGGERS: org.apache.kafka.clients.admin.AdminClient=DEBUG,org.apache.kafka.clients.NetworkClient=DEBUG,org.apache.kafka.common.config.AbstractConfig=DEBUG,org.apache.kafka.common.security.JaasContext=DEBUG
+
+    command: >
+      bash -cx "
+        echo 'DEBUG: Valor de KAFKA_CLUSTER_ID es: ${KAFKA_CLUSTER_ID}'
+        echo 'DEBUG: Valor de KAFKA_NODE_ID es: ${KAFKA_NODE_ID}'
+        echo 'DEBUG: Valor de KAFKA_USERNAME es: ${KAFKA_USERNAME}'
+        echo 'DEBUG: Valor de KAFKA_PASSWORD es: ${KAFKA_PASSWORD}'
+
+        # --- SECCIÓN 1: CREAR server.properties para kafka-storage.sh ---
+        SERVER_PROPERTIES_PATH=/tmp/server.properties
+        echo 'node.id=${KAFKA_NODE_ID}' > ${SERVER_PROPERTIES_PATH}
+        echo 'log.dirs=${KAFKA_LOG_DIRS}' >> ${SERVER_PROPERTIES_PATH}
+        echo 'DEBUG: Contenido de server.properties para kafka-storage:'
+        cat ${SERVER_PROPERTIES_PATH}
+
+        # --- SECCIÓN 2: CREAR client.properties para herramientas como cub kafka-ready y kafka-topics ---
+        CLIENT_CONFIG_PATH=/tmp/client.properties
+        echo 'bootstrap.servers=kafka:29092' > ${CLIENT_CONFIG_PATH}
+        echo 'security.protocol=SASL_PLAINTEXT' >> ${CLIENT_CONFIG_PATH}
+        echo 'sasl.mechanism=SCRAM-SHA-512' >> ${CLIENT_CONFIG_PATH}
+        # La línea JAAS, con las variables expandidas *aquí*
+        echo 'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${KAFKA_USERNAME}\" password=\"${KAFKA_PASSWORD}\";' >> ${CLIENT_CONFIG_PATH}
+        echo 'DEBUG: Contenido de client.properties para AdminClient:'
+        cat ${CLIENT_CONFIG_PATH}
+        # --- FIN SECCIONES DE CONFIG ---
+
+        if [ ! -f '/tmp/kraft-kafka-logs/meta.properties' ]; then
+          echo 'DEBUG: Formateando almacenamiento de Kafka para KRaft...'
+          /usr/bin/kafka-storage.sh format --cluster-id ${KAFKA_CLUSTER_ID} --node-id ${KAFKA_NODE_ID} --config ${SERVER_PROPERTIES_PATH} || { echo 'ERROR: Falló el formateo del almacenamiento de Kafka.'; exit 1; }
+          echo 'DEBUG: Almacenamiento de Kafka formateado.'
+        else
+          echo 'DEBUG: Almacenamiento de Kafka ya formateado, omitiendo el formateo.'
+        fi &&
+        echo 'DEBUG: Iniciando servidor Kafka...' &&
+        /etc/confluent/docker/run &
+        PID=$!
+        # --- CAMBIO CRÍTICO: Usar el nuevo client.properties para cub kafka-ready ---
+        # Asegúrate de que --config esté *después* de kafka:29092
+        cub kafka-ready -b kafka:29092 --config ${CLIENT_CONFIG_PATH} 1 60
+        wait $PID
+      "
+    volumes:
+      - kafka_data:/tmp/kraft-kafka-logs
+      - ./config/kafka/broker_jaas.config:/etc/kafka/secrets/broker_jaas.config:ro # Mantener este si KAFKA_OPTS lo usa
+      # - ./config/kafka/client_jaas.config:/etc/kafka/secrets/client_jaas.config:ro # Este ya no es necesario si se usa client.properties
+    healthcheck:
+      # --- CAMBIO CRÍTICO: Usar el nuevo client.properties para el healthcheck ---
+      # Asegúrate de que --config esté *después* de kafka:29092 y antes de kafka-topics
+      test: ["CMD-SHELL", "cub kafka-ready -b kafka:29092 --config ${CLIENT_CONFIG_PATH} 1 60 && kafka-topics --bootstrap-server kafka:29092 --config ${CLIENT_CONFIG_PATH} --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  kafka-topic-initializer:
+    build:
+      context: ./kafka
+      dockerfile: Dockerfile
+    hostname: kafka-topic-initializer
+    container_name: kafka-topic-initializer
+    depends_on:
+      kafka:
+        condition: service_healthy # Espera hasta que Kafka esté "HEALTHY"
+    environment:
+      KAFKA_ENV: "${KAFKA_ENV:-development}" # Usa variable de entorno para el entorno (default: development)
+      KAFKA_BROKERS: kafka:29092 # Conexión al servicio Kafka interno, ahora usando el listener de clientes SASL
+      # --- Configuración SASL para el inicializador de tópicos ---
+      KAFKA_USERNAME: "${KAFKA_USERNAME}"
+      KAFKA_PASSWORD: "${KAFKA_PASSWORD}"
+      KAFKA_SECURITY_PROTOCOL: "SASL_PLAINTEXT"
+      KAFKA_SASL_MECHANISM: "SCRAM-SHA-512"
+      # --- Fin de Configuración SASL ---
+    volumes:
+      - ./kafka/src:/app/src       # Mapea el código fuente
+      - ./kafka/config:/app/config # Mapea la configuración de tópicos
+      - ./kafka/pyproject.toml:/app/pyproject.toml
+      - ./kafka/poetry.lock:/app/poetry.lock
+       # Monta el archivo JAAS del cliente para que el inicializador pueda usarlo
+      - ./config/kafka/client_jaas.config:/etc/kafka/secrets/client_jaas.config:ro
+    command: ["/app/entrypoint.sh"] # Ejecutar el script de entrada (que leerá topics.yaml y creará)
+    restart: "no" # Se ejecuta y se detiene
+
+#####################################################
+# MONGODB                                           #
+#####################################################
+
+  # MongoDB Replica Set (3 Nodos)
+# MongoDB Replica Set (3 Nodos)
+  mongodb1:
+    image: mongo:6.0
+    container_name: mongodb1
+    hostname: mongodb1
+    ports:
+      - "27017:27017" # Solo expongo el puerto del primer nodo para la conexión externa
+    volumes:
+      - mongodb1_data:/data/db
+      - ./databases/mongo/scripts/mongodb_init.sh:/scripts/mongodb_init.sh:ro # Script de inicialización
+      - ./databases/mongo/scripts/init_replica_set.js:/scripts/init_replica_set.js:ro # Script JS
+      - ./databases/mongo/scripts/create_app_user.js:/scripts/create_app_user.js:ro # Nuevo script para usuario de app
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME} # Se usa para el usuario admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD} # Se usa para el usuario admin
+      MONGO_REPLICA_SET_NAME: rs0
+      # Variables de entorno para el script de usuario de aplicación
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth"] # <--- Habilita la autenticación
+    healthcheck:
+      # Modifica el healthcheck para autenticarse como el usuario admin
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mongodb2:
+    image: mongo:6.0
+    container_name: mongodb2
+    hostname: mongodb2
+    volumes:
+      - mongodb2_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_REPLICA_SET_NAME: rs0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth"] # <--- Habilita la autenticación
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mongodb3:
+    image: mongo:6.0
+    container_name: mongodb3
+    hostname: mongodb3
+    volumes:
+      - mongodb3_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_REPLICA_SET_NAME: rs0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth"] # <--- Habilita la autenticación
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Servicio de inicialización del Replica Set y creación de usuario de aplicación
+  mongodb-init:
+    image: mongo:6.0
+    container_name: mongodb_init
+    command: bash /scripts/mongodb_init.sh # Este script ahora manejará la creación de usuario
+    volumes:
+      - ./databases/mongo/scripts/mongodb_init.sh:/scripts/mongodb_init.sh:ro
+      - ./databases/mongo/scripts/init_replica_set.js:/scripts/init_replica_set.js:ro
+      - ./databases/mongo/scripts/create_app_user.js:/scripts/create_app_user.js:ro # <--- Nuevo script para usuario de app
+    environment:
+      MONGO_REPLICA_SET_NAME: rs0
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME} # Pasa la variable al script
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD} # Pasa la variable al script
+      MONGO_APP_DATABASE: ${MONGODB_APP_NAME} # <--- Define el nombre de tu base de datos aquí
+    depends_on:
+      mongodb1:
+        condition: service_healthy
+      mongodb2:
+        condition: service_healthy
+      mongodb3:
+        condition: service_healthy
+    restart: "no" # Solo se ejecuta una vez
+
+#####################################################
+# REDIS                                             #
+#####################################################
+
+# Redis Master
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: redis-master
+    hostname: redis-master
+    ports:
+      - "6379:6379" # Puerto para clientes externos, si lo necesitas (para desarrollo/pruebas directas)
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD} # Pasa la contraseña desde el .env
+    command: "redis-server --appendonly yes --protected-mode no --bind 0.0.0.0 --requirepass ${REDIS_PASSWORD}" # <--- Habilita la autenticación con la contraseña 
+    volumes:
+      - redis_master_data:/data # Volumen persistente para los datos del master
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"] # <--- Healthcheck con autenticación
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 10s # Tiempo para que Redis inicie antes de los healthchecks
+
+  # Redis Slaves (Réplicas)
+  redis-slave1:
+    image: redis:7.2-alpine
+    container_name: redis-slave1
+    hostname: redis-slave1
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: |
+      redis-server \
+      --replicaof redis-master 6379 \
+      --appendonly yes \
+      --protected-mode no \
+      --bind 0.0.0.0 \
+      --requirepass ${REDIS_PASSWORD} \ # <--- Hace que el slave también requiera contraseña para clientes
+      --masterauth ${REDIS_PASSWORD} \  # <--- Permite que el slave se autentique con el master
+    volumes:
+      - redis_slave1_data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"] # <--- Healthcheck con contraseña
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  redis-slave2:
+    image: redis:7.2-alpine
+    container_name: redis-slave2
+    hostname: redis-slave2
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: >
+      redis-server
+      --replicaof redis-master 6379
+      --appendonly yes
+      --protected-mode no
+      --bind 0.0.0.0
+      --requirepass ${REDIS_PASSWORD}
+      --masterauth ${REDIS_PASSWORD}
+    volumes:
+      - redis_slave2_data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"] # <--- Healthcheck con contraseña
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  # Redis Sentinels (Monitoreo y Failover)
+  redis-sentinel1:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel1
+    hostname: redis-sentinel1
+    ports:
+      - "26379:26379" # Puerto por defecto de Sentinel para clientes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD} # Pasa la contraseña al Sentinel
+    command: >
+      sh -c '
+        echo "port 26379" > /etc/redis/sentinel.conf;
+        echo "dir /tmp" >> /etc/redis/sentinel.conf;
+        echo "sentinel monitor mymaster redis-master 6379 2" >> /etc/redis/sentinel.conf;
+        echo "sentinel down-after-milliseconds mymaster 5000" >> /etc/redis/sentinel.conf;
+        echo "sentinel failover-timeout mymaster 10000" >> /etc/redis/sentinel.conf;
+        echo "sentinel parallel-syncs mymaster 1" >> /etc/redis/sentinel.conf;
+        echo "sentinel auth-pass mymaster ${REDIS_PASSWORD}" >> /etc/redis/sentinel.conf; # <--- Sentinel se autentica con el maestro
+        redis-sentinel /etc/redis/sentinel.conf
+      '
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-slave1:
+        condition: service_healthy
+      redis-slave2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-sentinel2:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel2
+    hostname: redis-sentinel2
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: >
+      sh -c '
+        echo "port 26379" > /etc/redis/sentinel.conf;
+        echo "dir /tmp" >> /etc/redis/sentinel.conf;
+        echo "sentinel monitor mymaster redis-master 6379 2" >> /etc/redis/sentinel.conf;
+        echo "sentinel down-after-milliseconds mymaster 5000" >> /etc/redis/sentinel.conf;
+        echo "sentinel failover-timeout mymaster 10000" >> /etc/redis/sentinel.conf;
+        echo "sentinel parallel-syncs mymaster 1" >> /etc/redis/sentinel.conf;
+        echo "sentinel auth-pass mymaster ${REDIS_PASSWORD}" >> /etc/redis/sentinel.conf;
+        redis-sentinel /etc/redis/sentinel.conf
+      '
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-slave1:
+        condition: service_healthy
+      redis-slave2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-sentinel3:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel3
+    hostname: redis-sentinel3
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: >
+      sh -c '
+        echo "port 26379" > /etc/redis/sentinel.conf;
+        echo "dir /tmp" >> /etc/redis/sentinel.conf;
+        echo "sentinel monitor mymaster redis-master 6379 2" >> /etc/redis/sentinel.conf;
+        echo "sentinel down-after-milliseconds mymaster 5000" >> /etc/redis/sentinel.conf;
+        echo "sentinel failover-timeout mymaster 10000" >> /etc/redis/sentinel.conf;
+        echo "sentinel parallel-syncs mymaster 1" >> /etc/redis/sentinel.conf;
+        echo "sentinel auth-pass mymaster ${REDIS_PASSWORD}" >> /etc/redis/sentinel.conf;
+        redis-sentinel /etc/redis/sentinel.conf
+      '
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-slave1:
+        condition: service_healthy
+      redis-slave2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+#####################################################
+# CASSANDRA                                         #
+#####################################################
+  # Cassandra Cluster (3 Nodos)
+  cassandra1:
+    image: cassandra:4.1
+    container_name: cassandra1
+    hostname: cassandra1
+    ports:
+      - "9042:9042" # Solo expongo el puerto del primer nodo
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME} 
+      CASSANDRA_DC: 'datacenter1'
+      CASSANDRA_RACK: 'rack1'
+      CASSANDRA_SEEDS: "cassandra1,cassandra2,cassandra3" # Nodos "semilla" para el descubrimiento
+      # Opcional: ajustar memoria para desarrollo (no para producción)
+      # JVM_OPTS: "-Xms1G -Xmx1G"
+      CASSANDRA_AUTHENTICATOR: org.apache.cassandra.auth.PasswordAuthenticator # <--- Habilita la autenticación por contraseña
+      CASSANDRA_AUTHORIZER: org.apache.cassandra.auth.CassandraAuthorizer # Opcional: para autorización basada en roles
+      CASSANDRA_PASSWORD_SET: "true" # <--- Indica que se establecerá la contraseña del usuario por defecto 'cassandra'
+      CASSANDRA_ROOT_USERNAME: ${CASSANDRA_ROOT_USERNAME} # <--- Nuevo: Usuario por defecto para el superuser
+      CASSANDRA_ROOT_PASSWORD: ${CASSANDRA_ROOT_PASSWORD} # <--- Nuevo: Contraseña por defecto para el superuser
+    volumes:
+      - cassandra1_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "--username", "${CASSANDRA_ROOT_USERNAME}", "--password", "${CASSANDRA_ROOT_PASSWORD}", "--debug", "--request-timeout=5", "-e", "describe keyspaces"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s # Cassandra tarda más en iniciar
+
+  cassandra2:
+    image: cassandra:4.1
+    container_name: cassandra2
+    hostname: cassandra2
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME}
+      CASSANDRA_DC: 'datacenter1'
+      CASSANDRA_RACK: 'rack1'
+      CASSANDRA_SEEDS: "cassandra1,cassandra2,cassandra3" # Es importante que todos se vean
+      CASSANDRA_AUTHENTICATOR: org.apache.cassandra.auth.PasswordAuthenticator
+      CASSANDRA_AUTHORIZER: org.apache.cassandra.auth.CassandraAuthorizer
+      CASSANDRA_ROOT_USERNAME: ${CASSANDRA_ROOT_USERNAME}
+      CASSANDRA_ROOT_PASSWORD: ${CASSANDRA_ROOT_PASSWORD}
+    volumes:
+      - cassandra2_data:/var/lib/cassandra
+    depends_on:
+      cassandra1:
+        condition: service_healthy # Espera a que el primer nodo esté listo
+    healthcheck:
+      test: ["CMD", "cqlsh", "--username", "${CASSANDRA_ROOT_USERNAME}", "--password", "${CASSANDRA_ROOT_PASSWORD}", "--debug", "--request-timeout=5", "-e", "describe keyspaces"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  cassandra3:
+    image: cassandra:4.1
+    container_name: cassandra3
+    hostname: cassandra3
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME}
+      CASSANDRA_DC: 'datacenter1'
+      CASSANDRA_RACK: 'rack1'
+      CASSANDRA_SEEDS: "cassandra1,cassandra2,cassandra3"
+      CASSANDRA_AUTHENTICATOR: org.apache.cassandra.auth.PasswordAuthenticator
+      CASSANDRA_AUTHORIZER: org.apache.cassandra.auth.CassandraAuthorizer
+      CASSANDRA_ROOT_USERNAME: ${CASSANDRA_ROOT_USERNAME}
+      CASSANDRA_ROOT_PASSWORD: ${CASSANDRA_ROOT_PASSWORD}
+    volumes:
+      - cassandra3_data:/var/lib/cassandra
+    depends_on:
+      cassandra2:
+        condition: service_healthy # Espera a que el nodo anterior esté listo
+    healthcheck:
+      test: ["CMD", "cqlsh", "--username", "${CASSANDRA_ROOT_USERNAME}", "--password", "${CASSANDRA_ROOT_PASSWORD}", "--debug", "--request-timeout=5", "-e", "describe keyspaces"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Servicio para inicializar esquema y usuarios en Cassandra
+  cassandra-init:
+    image: cassandra:4.1 # Usa la misma imagen que los nodos de Cassandra
+    container_name: cassandra_init
+    command: >
+      bash -c '
+        echo "Waiting for Cassandra cluster to be healthy..."
+        # Espera a que el primer nodo de Cassandra esté listo y acepte conexiones con credenciales
+        until cqlsh --username ${CASSANDRA_ROOT_USERNAME} --password ${CASSANDRA_ROOT_PASSWORD} --request-timeout=5 -e "describe keyspaces" > /dev/null 2>&1; do
+          printf '.'
+          sleep 5
+        done
+        echo "Cassandra cluster is healthy. Executing schema and user creation..."
+        cqlsh --username ${CASSANDRA_APP_USERNAME} --password ${CASSANDRA_APP_USERNAME} -f /scripts/init_cassandra.cql
+        echo "Cassandra schema and user creation complete."
+      '
+    volumes:
+      - ./databases/cassandra/scripts/init_cassandra.cql:/scripts/init_cassandra.cql:ro # <--- Archivo CQL
+    environment:
+      CASSANDRA_ROOT_USERNAME: ${CASSANDRA_ROOT_USERNAME}
+      CASSANDRA_ROOT_PASSWORD: ${CASSANDRA_ROOT_PASSWORD}
+      CASSANDRA_APP_USERNAME: ${CASSANDRA_APP_USERNAME}
+      CASSANDRA_APP_PASSWORD: ${CASSANDRA_APP_PASSWORD}
+    depends_on:
+      cassandra1:
+        condition: service_healthy # Espera a que el cluster esté listo
+      cassandra2:
+        condition: service_healthy
+      cassandra3:
+        condition: service_healthy
+    restart: "no" # Solo se ejecuta una vez
+
+  # ---- Microservicios Python (Backend y Ingestores) ----
+
+  backend_api:
+    build: ./backend # Ruta al Dockerfile del backend
+    container_name: backend_api
+    ports:
+      - "8000:8000"
+    environment:
+      # --- Configuración para Kafka SASL_PLAINTEXT ---
+      KAFKA_BROKERS: kafka:9092 # <--- CAMBIO CLAVE: Apunta al puerto SASL_PLAINTEXT del broker
+      KAFKA_USERNAME: ${KAFKA_USERNAME} # <--- AGREGADO: Obtiene el usuario del .env
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD} # <--- AGREGADO: Obtiene la contraseña del .env
+      KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT # <--- AGREGADO: Protocolo de seguridad
+      KAFKA_SASL_MECHANISM: SCRAM-SHA-512 # <--- AGREGADO: Mecanismo SASL
+      # --- Fin de Configuración Kafka ---
+      
+      # MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb1:27017,mongodb2:27017,mongodb3:27017/?replicaSet=rs0&authSource=admin # <--- Con autenticación
+      # O si tu usuario de aplicación está en la misma DB de aplicación (no admin)
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb1:27017,mongodb2:27017,mongodb3:27017/${MONGODB_APP_NAME}?replicaSet=rs0 # <--- Aquí el authSource es implícitamente your_application_db
+      # ---Configuración para Redis Sentinel ---
+      REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    depends_on:
+      - kafka
+      - mongodb1
+      - mongodb2
+      - mongodb3
+      - redis-sentinel1
+      - redis-sentinel2
+      - redis-sentinel3
+    volumes:
+      # Mapeos de volúmenes para desarrollo con hot-reloading
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/poetry.lock:/app/poetry.lock
+    # Comando para iniciar el servicio Flask/FastAPI (asumiendo FastAPI por uvicorn)
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  meetup_ingestor:
+    build: ./ingestors/meetup # Ruta al Dockerfile del ingestor Meetup
+    container_name: meetup_ingestor
+    ports:
+      - "8001:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      MEETUP_API_KEY: ${MEETUP_API_KEY}
+      REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD} 
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/meetup/app:/app/app
+      - ./ingestors/meetup/tests:/app/tests
+      - ./ingestors/meetup/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/meetup/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  openweathermap_ingestor:
+    build: ./ingestors/openweathermap # Ruta al Dockerfile del ingestor OpenWeatherMap
+    container_name: openweathermap_ingestor
+    ports:
+      - "8002:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      OPENWEATHERMAP_API_KEY: ${OPENWEATHERMAP_API_KEY}
+      REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD} 
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/openweathermap/app:/app/app
+      - ./ingestors/openweathermap/tests:/app/tests
+      - ./ingestors/openweathermap/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/openweathermap/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  tripadvisor_ingestor:
+    build: ./ingestors/tripadvisor # Ruta al Dockerfile del ingestor TripAdvisor
+    container_name: tripadvisor_ingestor
+    ports:
+      - "8003:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      TRIPADVISOR_API_KEY: ${TRIPADVISOR_API_KEY}
+      REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD} 
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/tripadvisor/app:/app/app
+      - ./ingestors/tripadvisor/tests:/app/tests
+      - ./ingestors/tripadvisor/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/tripadvisor/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  ticketmaster_ingestor:
+    build: ./ingestors/ticketmaster # Ruta al Dockerfile del ingestor Ticketmaster
+    container_name: ticketmaster_ingestor
+    ports:
+      - "8004:8000"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      TICKETMASTER_CONSUMER_KEY: ${TICKETMASTER_CONSUMER_KEY}
+      REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD} 
+    depends_on:
+      - kafka
+    volumes:
+      - ./ingestors/ticketmaster/app:/app/app
+      - ./ingestors/ticketmaster/tests:/app/tests
+      - ./ingestors/ticketmaster/pyproject.toml:/app/pyproject.toml
+      - ./ingestors/ticketmaster/poetry.lock:/app/poetry.lock
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # ---- Jobs de Procesamiento (Scala/Flink/Spark) ----
+  flink_job_recommendation_processor:
+    build:
+      context: ./processing/flink_jobs # Ruta al Dockerfile del job de Flink
+      dockerfile: Dockerfile
+    container_name: flink_recommendation_processor
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb1:27017,mongodb2:27017,mongodb3:27017/${MONGODB_APP_NAME}?replicaSet=rs0
+      # TODO: Definir si necesitas Redis
+      #REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+      #REDIS_MASTER_NAME: mymaster
+      #REDIS_PASSWORD: ${REDIS_PASSWORD} 
+    depends_on:
+      - kafka
+      - mongodb1
+      - mongodb2
+      - mongodb3
+    # Asume que tu Dockerfile de Flink ya copia los jars/clases y tiene el ENTRYPOINT/CMD correcto
+    # para ejecutar el job. Si no, necesitarías un 'command' similar al de los ingestores
+    # o un script de entrada dentro del contenedor de Flink.
+    # Ejemplo de comando si necesitas iniciarlo:
+    # command: ["/opt/flink/bin/flink", "run", "-c", "com.loopcity.flink.process_events", "/opt/flink/usrlib/your_job.jar"]
+
+  spark_job_data_processor:
+      build: ./processing/spark_jobs # Ruta al Dockerfile de tu job de Spark
+      container_name: spark_data_processor
+      environment:
+        KAFKA_BROKERS: kafka:29092 # Conexión al servicio Kafka interno
+        MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb1:27017,mongodb2:27017,mongodb3:27017/${MONGODB_APP_NAME}?replicaSet=rs0
+        
+        # TODO: Definir si necesitas Redis
+        #REDIS_SENTINELS: redis-sentinel1:26379,redis-sentinel2:26379,redis-sentinel3:26379
+        #REDIS_MASTER_NAME: mymaster
+        #REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+        CASSANDRA_CONTACT_POINTS: cassandra1,cassandra2,cassandra3 # Si tu job de Spark interactúa con Cassandra
+        CASSANDRA_APP_USERNAME: ${CASSANDRA_APP_USERNAME}
+        CASSANDRA_APP_PASSWORD: ${CASSANDRA_APP_PASSWORD}
+
+      depends_on:
+        - kafka
+        - mongodb1
+        - mongodb2
+        - mongodb3 # Agrega dependencias según las bases de datos con las que interactúe
+        - cassandra1
+        - cassandra2
+        - cassandra3
+      # Asume que tu Dockerfile de Spark ya copia los jars/clases y tiene el ENTRYPOINT/CMD correcto
+      # para ejecutar el job. Si no, necesitarías un 'command' similar al de los ingestores
+      # o un script de entrada dentro del contenedor de Spark.
+      #
+      # Ejemplo de comando si tu job de Spark es un script de Python y necesitas iniciarlo:
+      # command: ["spark-submit", "--master", "local[*]", "/app/src/main/scala/com/loopcity/spark/process_events.py"]
+      #
+      # Si tu job es un JAR de Scala/Java y tienes un Flink/Spark Cluster:
+      # Este tipo de servicio se suele lanzar a un cluster de Spark (que también podrías definir
+      # en docker-compose con un master y workers si tuvieras un setup más complejo),
+      # no simplemente ejecutarse como un contenedor independiente con 'spark-submit local'.
+      # Para un desarrollo local, el `command` con `spark-submit local` es útil.
+      # Ejemplo con JAR:
+      # command: ["spark-submit", "--class", "com.loopcity.spark.ProcessEvents", "/app/your_spark_job.jar"]
+
+  # ---- Volúmenes para Persistencia de Datos ----
+volumes:
+  kafka_data:
+  mongodb1_data:
+  mongodb2_data:
+  mongodb3_data:
+  redis_master_data:
+  redis_slave1_data:
+  redis_slave2_data:
+  cassandra1_data:
+  cassandra2_data:
+  cassandra3_data:

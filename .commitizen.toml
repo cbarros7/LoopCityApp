@@ -1,0 +1,13 @@
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "1.2.3"
+tag_format = "v$version"
+annotated_tag = true
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+changelog_incremental = true
+bump_message = "ci: release v$current_version"
+version_files = [
+  "pyproject.toml"
+]
+major_version_zero = false

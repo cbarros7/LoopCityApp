@@ -1,5 +1,5 @@
 # Dockerfile.topic_initializer
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim
 
 # Instalar Poetry
 ENV POETRY_HOME="/opt/poetry"

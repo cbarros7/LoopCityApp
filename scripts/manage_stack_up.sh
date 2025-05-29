@@ -1,11 +1,27 @@
 #!/bin/bash
 
+# --- Cargar variables de entorno desde .env ---
+# Asumimos que .env está en el directorio padre de scripts/
+echo "DEBUG: Checking for .env at: $(readlink -f ../.env)" # <-- Añade esta línea temporalmente para depurar
+if [ -f ".env" ]; then
+  set -a
+  . ".env"
+  set +a
+  echo "DEBUG: .env file loaded for certificate generation."
+else
+  echo "WARNING: .env file not found at ../.env. Ensure it exists with SSL passwords defined."
+  # Puedes salir aquí si las contraseñas son obligatorias, o usar valores por defecto.
+  # Para un script de generación, es mejor que las passwords estén definidas.
+  exit 1
+fi
+# --- Cargar variables de entorno ---
+
 # --- Configuración ---
 # Navega al directorio raíz de tu proyecto donde se encuentra docker-compose.yaml
 cd "$(dirname "$0")/.."
 
 # Define el nombre de tu proyecto explícitamente (opcional, Docker lo infiere del directorio)
-export COMPOSE_PROJECT_NAME="loop-city-app"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME}"
 
 # --- Función para verificar el demonio de Docker ---
 check_docker_daemon() {
@@ -118,7 +134,7 @@ fi
 # Ahora, levantar los servicios
 if [ "$ACTION" = "full" ]; then
     echo "Levantando el stack COMPLETO..."
-    docker-compose -p "${COMPOSE_PROJECT_NAME}" up -d --build --remove-orphans
+    docker-compose -p "${COMPOSE_PROJECT_NAME}" up -d --build --remove-orphans 
 else # Acción parcial
     echo "Levantando servicios específicos: ${SERVICES}"
     # --build se mantiene para que Docker Compose construya si no lo hizo antes o si hay cambios

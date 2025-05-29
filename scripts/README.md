@@ -69,3 +69,9 @@ Bash
     # O la forma corta:
     # ./scripts/manage_stack_up.sh backend_api mongodb1 -c
 
+
+
+
+
+### Generate certs. 
+ ./scripts/generate_certs.sh     

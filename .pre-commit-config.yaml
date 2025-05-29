@@ -33,6 +33,11 @@ repos:
       - id: pretty-format-json # If you handle formatted JSON files
         args: ["--autofix", "--indent=2"]
 
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.10.0  # Usa la última versión estable
+    hooks:
+      - id: commitizen
+
 # To ensure pre-commit always runs in the Poetry environment
 minimum_pre_commit_version: "2.17.0" # Make sure you have a recent version
 default_language_version:
