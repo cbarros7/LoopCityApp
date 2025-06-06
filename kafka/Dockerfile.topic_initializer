@@ -1,0 +1,33 @@
+# Dockerfile.topic_initializer
+FROM python:3.11-slim
+
+# Instalar Poetry
+ENV POETRY_HOME="/opt/poetry"
+ENV POETRY_VIRTUALENVS_IN_PROJECT=true
+ENV PATH="$POETRY_HOME/bin:$PATH"
+
+# Instalar Poetry de forma más robusta y verificar la instalación
+# Utiliza la versión recomendada para mayor estabilidad
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN curl -f --retry 5 --retry-connrefused --connect-timeout 10 -m 60 -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME python -
+# Después de la instalación, verifica que Poetry esté en el PATH
+RUN poetry --version
+
+# Establecer el directorio de trabajo en el contenedor
+WORKDIR /app
+
+# Copiar archivos de Poetry y las dependencias
+COPY pyproject.toml poetry.lock ./
+
+# Instalar dependencias con Poetry
+RUN poetry install --no-root
+
+# Copiar el código fuente y la configuración (se montarán como volúmenes)
+COPY src/ ./src/
+COPY config/ ./config/
+COPY entrypoint.sh ./entrypoint.sh
+
+# Hacer el script ejecutable
+RUN chmod +x /app/entrypoint.sh
+
+# No necesitas CMD aquí si el docker-compose.yaml lo sobreescribe

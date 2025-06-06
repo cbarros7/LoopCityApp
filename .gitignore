@@ -3,9 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
-*.so
-
 # Distribution / packaging
 .Python
 build/
@@ -124,9 +121,6 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 
-# SageMath parsed files
-*.sage.py
-
 # Environments
 .env
 .venv
@@ -135,6 +129,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.vscode/
 
 # Spyder project settings
 .spyderproject
@@ -165,10 +160,142 @@ cython_debug/
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+.idea/
 
 # Ruff stuff:
 .ruff_cache/
 
 # PyPI configuration file
 .pypirc
+
+# --- Scala / SBT / Akka / Spark / Flink Specific Ignores ---
+# SBT (Scala Build Tool) related directories and files
+.metals/              # Metals Language Server files
+.sbt/                 # SBT cache and settings
+.cache/               # Generic cache directory
+.scala_dependencies   # Scala build dependencies
+.scala_workspace      # Scala workspace files
+target/               # SBT compilation output
+project/target/       # SBT project specific compilation output
+project/project/      # SBT project generated directories
+*.jar                 # Compiled JAR files
+*.war                 # Compiled WAR files
+*.zip                 # Archive files
+*.tar                 # Tar archive files
+*.tgz                 # Gzipped tar archive files
+.bloop/               # Bloop build server files
+.scala-build/
+.metals/
+.bsp/                 # Build Server Protocol files
+
+# Maven (if used with Scala/Java projects)
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/wrapper/maven-wrapper.jar # Keep this if you use Maven wrapper and want to commit it
+
+# Log files and temporary files specific to JVM applications
+hs_err_pid*.log       # JVM crash logs
+
+# Spark/Flink related output and temporary files
+spark-events/         # Spark history server event logs
+history/              # Generic history directory
+flink-checkpoints/    # Flink checkpoints directory
+flink-savepoints/     # Flink savepoints directory
+*.csv                 # Common data output formats (if generated)
+*.parquet
+*.orc
+*.avro
+*.json                # JSON data output (if generated)
+checkpoint/           # Generic checkpoint directory
+savepoint/            # Generic savepoint directory
+
+# --- Database Specific Ignores ---
+
+## MongoDB
+# Data directory (default location, adjust if you use a custom path like within PROJECT_NAME)
+/data/db/
+# Log files
+/var/log/mongodb/*.log
+mongodb.log
+mongod.log
+# Lock files
+mongod.lock
+
+## Redis
+# Data persistence files (RDB and AOF)
+*.rdb                 # Redis Database backup file
+appendonly.aof        # Append Only File for Redis
+# Log files
+redis.log
+# Dump files
+dump.rdb
+
+## Cassandra
+# Data directories (default locations, adjust if you use custom paths)
+/var/lib/cassandra/data/
+/var/lib/cassandra/commitlog/
+/var/lib/cassandra/saved_caches/
+# Log files
+/var/log/cassandra/*.log
+system.log
+debug.log
+# Configuration files that might be locally modified and shouldn't be committed
+cassandra.yaml.bak
+jvm.options.bak
+
+# --- Kafka Specific Ignores ---
+# Kafka data directories (default locations, adjust if you use custom paths)
+/tmp/kafka-logs/      # Default directory for Kafka broker logs/data
+/tmp/zookeeper/       # Default directory for Zookeeper data (often used by Kafka)
+# Kafka Connect data (if using Kafka Connect in standalone or distributed mode)
+/tmp/connect-offsets/
+/tmp/connect-configs/
+/tmp/connect-status/
+# Log files
+kafka.log
+zookeeper.out
+# Consumer group offsets (if managed locally, e.g., for testing)
+consumer-offsets/
+
+
+scripts/scrapping/*
+ingestors/eventbrite/
+
+# Eventbrite and Meetup Scrapers
+!scripts/scrapping/app/__init__.py
+!scripts/scrapping/app/config.py
+!scripts/scrapping/app/eventbrite_scraper.py
+!scripts/scrapping/app/main.py
+!scripts/scrapping/app/meetup_scraper.py
+!scripts/scrapping/app/scrapper_adapter.py
+!scripts/scrapping/Dockerfile
+!scripts/scrapping/poetry.lock
+!scripts/scrapping/pyproject.toml
+!scripts/scrapping/README.md
+
+# Ignore everything inside config/
+config/*
+# Allow .yaml files in config/
+!config/*.yaml
+# Allow init_kafka_broker.sh in config/
+!config/init_kafka_broker.sh
+# Explicitly ignore config/kafka (already covered by config/*)
+config/kafka/
+
+# Ignore everything inside kafka/certs
+kafka/certs/
+
+# Ignore everything inside kafka/data
+kafka/data/
+
+# Ignore everything inside kafka/config
+kafka/config/*
+# Allow only .cnf files inside kafka/config
+!kafka/config/*.cnf
+
+# --- End of .gitignore ---

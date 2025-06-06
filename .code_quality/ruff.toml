@@ -1,0 +1,82 @@
+# .code_quality/ruff.toml
+# Configuración robusta y profesional para Ruff
+
+# Directorios a incluir/excluir
+src = ["app", "tests"] # Analizar el código en las carpetas 'app' y 'tests'
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+# Reglas a seleccionar
+# Una selección robusta que incluye las principales categorías y algunas específicas.
+select = [
+    "E",   # pycodestyle (Error)
+    "W",   # pycodestyle (Warning)
+    "F",   # Pyflakes
+    "I",   # isort
+    "C",   # flake8-comprehensions
+    "B",   # flake8-bugbear
+    "Q",   # flake8-quotes
+    "PT",  # flake8-pytest-style
+    "RUF", # Ruff-specific rules
+    "ASYNC", # flake8-async (para código asíncrono)
+    "UP",  # pyupgrade (sugerencias para modernizar el código Python)
+    "ANN", # flake8-annotations (garantiza type hints)
+    "ARG", # flake8-unused-arguments
+    "N",   # pep8-naming
+    "D",   # pydocstyle (estilo de docstrings)
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "PERF", # perflint (optimizaciones de rendimiento)
+]
+
+# Reglas a ignorar (comúnmente ignoradas o no aplicables)
+ignore = [
+    "E501",  # Line too long (Ruff's formatter handles this, or set line-length)
+    "D100",  # Missing docstring in public module (demasiado estricto para archivos pequeños)
+    "D104",  # Missing docstring in public package (idem)
+    "ANN101", # Missing type annotation for `self` in method (Ruff puede inferirlo)
+    "ANN102", # Missing type annotation for `cls` in classmethod (Ruff puede inferirlo)
+]
+
+# Longitud de línea (Ruff puede formatear para respetar esto)
+line-length = 88
+
+# Opciones de formateo
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+docstring-code-format = false
+line-ending = "auto"
+
+# Opciones específicas por tipo de regla (ej. isort)
+[tool.ruff.isort]
+known-first-party = ["app"] # Considera 'app' como código propio para ordenar imports
+known-local-folder = ["app"]
+combine-as-imports = true
+force-wrap-long-lines = true
+
+# Opciones específicas para flake8-annotations (ANN)
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"] # No exigir type hints en archivos de test
+"__init__.py" = ["D"] # No exigir docstrings en __init__.py
+
+# Opciones específicas para pydocstyle (D) si lo activas
+[tool.ruff.lint.pydocstyle]
+convention = "google" # Convención de docstrings de Google (o "numpy", "pep257")

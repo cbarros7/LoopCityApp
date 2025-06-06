@@ -1,0 +1,20 @@
+# pyproject.toml
+[tool.poetry]
+name = "kafka"
+version = "0.1.0"
+description = "Proyecto de ingestión de APIs con Kafka y Python"
+authors = ["Carlos Barros <loopcityapp@gmail.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.12"
+confluent-kafka = "^2.3.0" # Asegúrate de que la versión sea compatible con tu Kafka
+PyYAML = "^6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+# Dependencias de desarrollo, si las hay (ej. pytest)
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

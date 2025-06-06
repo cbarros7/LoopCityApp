@@ -1,0 +1,44 @@
+# .pre-commit-config.yaml
+# Pre-commit hook configuration for the LoopCityApp project
+
+repos:
+  # Ruff Linter and Formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0 # Use the same version of Ruff as in poetry add
+    hooks:
+      - id: ruff
+        args: ["--fix", "--config", ".code_quality/ruff.toml"] # Specify the path to the configuration file
+      - id: ruff-format # Hook for the Ruff formatter
+        args: ["--check", "--config", ".code_quality/ruff.toml"] # Specify the path to the configuration file
+        # If you want pre-commit to auto-format, change `args: ["--check", ...]` to `args: ["--config", ...]`.
+        # It is good practice for `ruff format` to only format, and pre-commit to only alert, hence `--check`.
+        files: '^(backend/|ingestors/eventbrite/|ingestors/meetup/|ingestors/openweathermap/|ingestors/tripadvisor/).*\.py$'
+  
+  # Check for large files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0 # Use the latest stable version
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=5000"] # Max 5MB per file
+
+  # Basic text file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: detect-private-key
+      - id: pretty-format-json # If you handle formatted JSON files
+        args: ["--autofix", "--indent=2"]
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.10.0  # Usa la última versión estable
+    hooks:
+      - id: commitizen
+
+# To ensure pre-commit always runs in the Poetry environment
+minimum_pre_commit_version: "2.17.0" # Make sure you have a recent version
+default_language_version:
+  python: python3.11 # Specify the Python version of the Poetry environment

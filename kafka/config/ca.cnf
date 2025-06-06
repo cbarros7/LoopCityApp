@@ -1,0 +1,18 @@
+[req]
+distinguished_name = dn
+x509_extensions = v3_ca
+prompt = no 
+
+[dn]
+C = ES                   
+ST = Madrid           
+L = Madrid         
+O = Confluent            
+OU = Kafka               
+CN = localhost           
+emailAddress = .  
+
+[v3_ca]
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always,issuer
+basicConstraints = CA:true

@@ -1,0 +1,99 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # ---- Infraestructura Compartida (Kafka (Kraft), MongoDB, Redis, Cassandra) ----
+
+#####################################################
+# KAFKA                                             #
+#####################################################
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-broker
+    ports:
+      - "29093:29093"   # Listener CLIENT_SSL (SSL + SASL)
+      - "9092:9092"     # Listener PLAINTEXT
+    environment:
+      # --- Configuración de Kafka en Modo KRaft ---
+      KAFKA_CLUSTER_ID: "NUl-ESs1Su2m_rKFHrZDhA"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093" # Comunicación interna entre broker/controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: "BROKER"
+
+      # --- Configuración de Listeners ---
+      KAFKA_LISTENERS: "CLIENT_SSL://0.0.0.0:29093,PLAINTEXT://0.0.0.0:9092,BROKER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT_SSL://localhost:29093,PLAINTEXT://localhost:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT_SSL:SASL_SSL,PLAINTEXT:PLAINTEXT,BROKER:PLAINTEXT"
+
+      KAFKA_SASL_ENABLED_MECHANISMS: "SCRAM-SHA-512"
+      KAFKA_SASL_MECHANISM_LISTENERS: "CLIENT_SSL:SCRAM-SHA-512"
+      KAFKA_JAA_SERVER_ENABLE: 'true'
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/broker_jaas.config"
+      KAFKA_SSL_CLIENT_AUTH: 'required'
+      KAFKA_SSL_KEYSTORE_LOCATION: '/etc/kafka/secrets/kafka.keystore.p12'
+      KAFKA_SSL_KEYSTORE_FILENAME: 'kafka.keystore.p12'
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: "broker_keystore_password.txt"
+      KAFKA_SSL_KEY_CREDENTIALS: "broker_key_password.txt"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: '/etc/kafka/secrets/kafka.truststore.p12'
+      KAFKA_SSL_TRUSTSTORE_FILENAME: 'kafka.truststore.p12'
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: "broker_truststore_password.txt"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_USERNAME: "${KAFKA_USERNAME}"
+      KAFKA_PASSWORD: "${KAFKA_PASSWORD}"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data" 
+
+    volumes:
+      # Volumen persistente para los logs de KRaft y los datos de Kafka
+      - ./kafka-data:/var/lib/kafka/data
+
+      # Rutas de Certificados del Broker (sin cambios en esta sección respecto al paso anterior)
+      - ./kafka/certs/broker/kafka.keystore.p12:/etc/kafka/secrets/kafka.keystore.p12:ro
+      - ./kafka/certs/broker/kafka.truststore.p12:/etc/kafka/secrets/kafka.truststore.p12:ro 
+
+      # --- ¡Nuevas Rutas para Archivos de Contraseña (dentro de kafka/config/ssl)! ---
+      - ./kafka/config/ssl/broker_keystore_password.txt:/etc/kafka/secrets/broker_keystore_password.txt:ro
+      - ./kafka/config/ssl/broker_key_password.txt:/etc/kafka/secrets/broker_key_password.txt:ro
+      - ./kafka/config/ssl/broker_truststore_password.txt:/etc/kafka/secrets/broker_truststore_password.txt:ro
+
+      # Archivos JAAS y de Usuarios (sin cambios en esta sección respecto al paso anterior)
+      - ./kafka/config/broker_jaas.config:/etc/kafka/secrets/broker_jaas.config:ro
+      - ./kafka/config/broker_users.properties:/tmp/broker_users.properties
+      
+      # --- ¡Montar el script init_kafka.sh en el contenedor! ---
+      - ./config/init_kafka_broker.sh:/usr/bin/init_kafka_broker.sh
+
+    # --- ¡Ahora, simplemente ejecutar el script! ---
+    command: ["bash", "/usr/bin/init_kafka_broker.sh"]
+
+
+  # ---- Microservicios Python (Backend y Ingestores) ----
+
+  backend_api:
+    build: ./backend # Ruta al Dockerfile del backend
+    container_name: backend_api
+    ports:
+      - "8000:8000"
+    environment:
+      # --- Configuración para Kafka SASL_PLAINTEXT ---
+      KAFKA_BROKERS: kafka:9092 # <--- CAMBIO CLAVE: Apunta al puerto SASL_PLAINTEXT del broker
+      KAFKA_USERNAME: ${KAFKA_USERNAME} # <--- AGREGADO: Obtiene el usuario del .env
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD} # <--- AGREGADO: Obtiene la contraseña del .env
+      KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT # <--- AGREGADO: Protocolo de seguridad
+      KAFKA_SASL_MECHANISM: SCRAM-SHA-512 # <--- AGREGADO: Mecanismo SASL
+      # --- Fin de Configuración Kafka ---
+      
+     
+    depends_on:
+      - kafka
+    volumes:
+      # Mapeos de volúmenes para desarrollo con hot-reloading
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/poetry.lock:/app/poetry.lock
+    # Comando para iniciar el servicio Flask/FastAPI (asumiendo FastAPI por uvicorn)
+    command: ["python", "app.py"]
+
+volumes:
+  backend:
