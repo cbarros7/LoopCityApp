@@ -273,6 +273,10 @@ ingestors/eventbrite/
 !scripts/scrapping/app/main.py
 !scripts/scrapping/app/meetup_scraper.py
 !scripts/scrapping/app/scrapper_adapter.py
+!scripts/scrapping/Dockerfile
+!scripts/scrapping/poetry.lock
+!scripts/scrapping/pyproject.toml
+!scripts/scrapping/README.md
 
 # Ignore everything inside config/
 config/*
