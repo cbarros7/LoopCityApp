@@ -263,7 +263,7 @@ zookeeper.out
 consumer-offsets/
 
 
-scripts/scrapping/
+scripts/scrapping/*
 ingestors/eventbrite/
 
 # Eventbrite and Meetup Scrapers
