@@ -266,6 +266,14 @@ consumer-offsets/
 scripts/scrapping/
 ingestors/eventbrite/
 
+# Eventbrite and Meetup Scrapers
+!scripts/scrapping/app/__init__.py
+!scripts/scrapping/app/config.py
+!scripts/scrapping/app/eventbrite_scraper.py
+!scripts/scrapping/app/main.py
+!scripts/scrapping/app/meetup_scraper.py
+!scripts/scrapping/app/scrapper_adapter.py
+
 # Ignore everything inside config/
 config/*
 # Allow .yaml files in config/
