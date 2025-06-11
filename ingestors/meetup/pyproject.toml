@@ -15,7 +15,10 @@ loguru = "^0.7.3"
 
 confluent-kafka = "^2.4.0"
 
-requests = "^2.31.0" # For the Meetup API
+# Core dependencies
+requests = "^2.31.0"      # Allows versions like 2.31.x, 2.32.x, etc., but not 3.0.0
+beautifulsoup4 = "^4.12.0" # Similarly, allows 4.12.x, 4.13.x, etc.
+playwright = "^1.43.0" 
 
 python-dotenv = "^1.0.0"
 

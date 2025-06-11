@@ -1,18 +1,19 @@
 [tool.poetry]
-name = "proxy-collector"
+name = "ingestor-scraping"
 version = "0.1.0"
 description = "Script for daily collection of free proxies and managing them in DuckDB."
 authors = ["Your Name <your.email@example.com>"] # Authors format for Poetry
 readme = "README.md"
-packages = [{include = "app"}] # Uncomment and adjust if your code is in a subfolder (e.g., 'src' or 'app')
+packages = [{include = "src"},
+{include = "meetup"},
+{include = "eventbrite"}] # Uncomment and adjust if your code is in a subfolder (e.g., 'src' or 'app')
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.12" # Defines the Python version range your project supports
 
-# Core dependencies for proxy collection and database
+# Core dependencies
 requests = "^2.31.0"      # Allows versions like 2.31.x, 2.32.x, etc., but not 3.0.0
 beautifulsoup4 = "^4.12.0" # Similarly, allows 4.12.x, 4.13.x, etc.
-duckdb = "^0.10.0"         # Allows 0.10.x, 0.11.x, etc.
 playwright = "^1.43.0" 
 
 # --- Optional: Development Dependencies (for linting, testing, etc.) ---
