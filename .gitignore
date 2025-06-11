@@ -284,3 +284,11 @@ kafka/config/*
 !kafka/config/*.cnf
 
 # --- End of .gitignore ---
+kafka-data/recovery-point-offset-checkpoint
+kafka-data/replication-offset-checkpoint
+kafka-data/__cluster_metadata-0/*
+kafka-data/meta.properties
+kafka-data/.lock
+kafka-data/bootstrap.checkpoint
+kafka-data/cleaner-offset-checkpoint
+kafka-data/log-start-offset-checkpoint
