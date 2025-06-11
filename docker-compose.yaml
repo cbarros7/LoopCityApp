@@ -1,5 +1,4 @@
 # docker-compose.yml
-version: '3.8'
 
 services:
   # ---- Infraestructura Compartida (Kafka (Kraft), MongoDB, Redis, Cassandra) ----
@@ -82,10 +81,15 @@ services:
       KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT # <--- AGREGADO: Protocolo de seguridad
       KAFKA_SASL_MECHANISM: SCRAM-SHA-512 # <--- AGREGADO: Mecanismo SASL
       # --- Fin de Configuración Kafka ---
+
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb1:27017,mongodb2:27017,mongodb3:27017/${MONGO_APP_DATABASE}?replicaSet=rs0 # <--- Aquí el authSource es implícitamente your_application_db
       
      
     depends_on:
       - kafka
+      - mongodb1
+      - mongodb2
+      - mongodb3
     volumes:
       # Mapeos de volúmenes para desarrollo con hot-reloading
       - ./backend/app:/app/app
@@ -95,5 +99,116 @@ services:
     # Comando para iniciar el servicio Flask/FastAPI (asumiendo FastAPI por uvicorn)
     command: ["python", "app.py"]
 
+  #####################################################
+  # MONGODB                                           #
+  #####################################################
+
+  # MongoDB Replica Set (3 Nodos)
+  mongodb1:
+    image: mongo:6.0
+    container_name: mongodb1
+    hostname: mongodb1
+    ports:
+      - "27017:27017" # Solo expongo el puerto del primer nodo para la conexión externa
+    volumes:
+      - mongodb1_data:/data/db
+      - ./databases/mongo/scripts/mongodb_init.sh:/scripts/mongodb_init.sh:ro # Script de inicialización
+      - ./databases/mongo/scripts/init_replica_set.js:/scripts/init_replica_set.js:ro # Script JS
+      - ./databases/mongo/scripts/create_app_user.js:/scripts/create_app_user.js:ro # Nuevo script para usuario de app
+      - ./databases/mongo/config/mongo-keyfile:/etc/mongo-keyfile:ro
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME} # Se usa para el usuario admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD} # Se usa para el usuario admin
+      MONGO_REPLICA_SET_NAME: rs0
+      # Variables de entorno para el script de usuario de aplicación
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo-keyfile"] # <--- Habilita la autenticación
+    healthcheck:
+      # Modifica el healthcheck para autenticarse como el usuario admin
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend-network
+
+  mongodb2:
+    image: mongo:6.0
+    container_name: mongodb2
+    hostname: mongodb2
+    volumes:
+      - mongodb2_data:/data/db
+      - ./databases/mongo/config/mongo-keyfile:/etc/mongo-keyfile:ro
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_REPLICA_SET_NAME: rs0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo-keyfile"] # <--- Habilita la autenticación
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend-network
+
+  mongodb3:
+    image: mongo:6.0
+    container_name: mongodb3
+    hostname: mongodb3
+    volumes:
+      - mongodb3_data:/data/db
+      - ./databases/mongo/config/mongo-keyfile:/etc/mongo-keyfile:ro
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_REPLICA_SET_NAME: rs0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo-keyfile"] # <--- Habilita la autenticación
+    healthcheck:
+      test: ["CMD", "mongosh", "--host", "localhost", "-u", "${MONGO_ROOT_USERNAME}", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend-network
+
+  # Servicio de inicialización del Replica Set y creación de usuario de aplicación
+  mongodb-init:
+    image: mongo:6.0
+    container_name: mongodb_init
+    command: bash /scripts/mongodb_init.sh # Este script ahora manejará la creación de usuario
+    volumes:
+      - ./databases/mongo/scripts/mongodb_init.sh:/scripts/mongodb_init.sh:ro
+      - ./databases/mongo/scripts/init_replica_set.js:/scripts/init_replica_set.js:ro
+      - ./databases/mongo/scripts/create_app_user.js:/scripts/create_app_user.js:ro # <--- Nuevo script para usuario de app
+    environment:
+      MONGO_REPLICA_SET_NAME: rs0
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE}
+    depends_on:
+      mongodb1:
+        condition: service_healthy
+      mongodb2:
+        condition: service_healthy
+      mongodb3:
+        condition: service_healthy
+    networks:
+      - backend-network
+    restart: "no" # Solo se ejecuta una vez
+
 volumes:
   backend:
+  mongodb1_data:
+  mongodb2_data:
+  mongodb3_data:
+
+networks:
+  backend-network:
+    driver: bridge
