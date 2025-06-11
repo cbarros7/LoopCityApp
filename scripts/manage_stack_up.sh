@@ -148,3 +148,5 @@ else
     echo "Hubo un error durante la operación de subida."
     exit 1
 fi
+
+docker image prune -f

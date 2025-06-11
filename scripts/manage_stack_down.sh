@@ -69,3 +69,5 @@ else
     echo "Hubo un error durante la operación de bajada."
     exit 1
 fi
+
+docker image prune -f
